@@ -20,7 +20,7 @@ export default async function handler(req, res) {
       result = {
         protocolVersion: '2024-11-05',
         capabilities: { tools: {} },
-        serverInfo: { name: 'searx-mcp', version: '1.0.0' },
+        serverInfo: { name: 'ddg-search-mcp', version: '1.0.0' },
       };
       break;
 
@@ -32,7 +32,7 @@ export default async function handler(req, res) {
         tools: [
           {
             name: 'web_search',
-            description: 'Search the web. Returns titles, links, and snippets.',
+            description: 'Search the web using DuckDuckGo. Returns titles, links, and snippets.',
             inputSchema: {
               type: 'object',
               properties: {
@@ -51,43 +51,61 @@ export default async function handler(req, res) {
         const query = params.arguments.query;
         const num = params.arguments.num || 5;
 
-const instances = [
-          'https://searx.be',
-          'https://search.ononoki.org',
-          'https://searx.work',
-          'https://paulgo.io',
-          'https://priv.au',
-        ];
+        try {
+          const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+          const response = await fetch(url, {
+            method: 'POST',
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+              'Content-Type': 'application/x-www-form-urlencoded',
+            },
+            body: `q=${encodeURIComponent(query)}`,
+          });
 
-        let data = null;
-        let lastError = '';
+          const html = await response.text();
 
-        for (const instance of instances) {
-          try {
-            const url = `${instance}/search?q=${encodeURIComponent(query)}&format=json&number_of_results=${num}`;
-            const response = await fetch(url, {
-              headers: { 'User-Agent': 'MCP-Search/1.0' },
-            });
-            if (response.ok) {
-              data = await response.json();
-              break;
+          // Parse results from DuckDuckGo HTML
+          const results = [];
+          const resultBlocks = html.split('class="result__body"');
+
+          for (let i = 1; i < resultBlocks.length && results.length < num; i++) {
+            const block = resultBlocks[i];
+
+            // Extract title and link
+            const linkMatch = block.match(/class="result__a"[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/);
+            // Extract snippet
+            const snippetMatch = block.match(/class="result__snippet"[^>]*>([\s\S]*?)<\/(?:a|span|td)/);
+
+            if (linkMatch) {
+              let link = linkMatch[1];
+              // DuckDuckGo wraps links in a redirect URL
+              const uddgMatch = link.match(/uddg=([^&]*)/);
+              if (uddgMatch) {
+                link = decodeURIComponent(uddgMatch[1]);
+              }
+
+              const title = linkMatch[2].replace(/<[^>]*>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#x27;/g, "'").replace(/&quot;/g, '"').trim();
+              const snippet = snippetMatch
+                ? snippetMatch[1].replace(/<[^>]*>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#x27;/g, "'").replace(/&quot;/g, '"').trim()
+                : '';
+
+              if (title && link) {
+                results.push({ title, link, snippet });
+              }
             }
-          } catch (e) {
-            lastError = e.message;
           }
-        }
 
-        if (data && data.results && data.results.length > 0) {
-          const text = data.results
-            .slice(0, num)
-            .map((item, i) => `${i + 1}. ${item.title}\n   ${item.link}\n   ${item.content || ''}`)
-            .join('\n\n');
-          result = { content: [{ type: 'text', text }] };
-        } else if (data) {
-          result = { content: [{ type: 'text', text: 'No results found.' }] };
-        } else {
+          if (results.length > 0) {
+            const text = results
+              .map((item, i) => `${i + 1}. ${item.title}\n   ${item.link}\n   ${item.snippet}`)
+              .join('\n\n');
+            result = { content: [{ type: 'text', text }] };
+          } else {
+            result = { content: [{ type: 'text', text: 'No results found.' }] };
+          }
+        } catch (e) {
           result = {
-            content: [{ type: 'text', text: `All instances failed. Last error: ${lastError}` }],
+            content: [{ type: 'text', text: `Error: ${e.message}` }],
             isError: true,
           };
         }
