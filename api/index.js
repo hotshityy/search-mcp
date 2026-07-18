@@ -66,7 +66,7 @@ export default async function handler(req, res) {
 
           // Parse results from DuckDuckGo HTML
           const results = [];
-          const resultBlocks = html.split('class="result__body"');
+         const resultBlocks = html.split('result__body');
 
           for (let i = 1; i < resultBlocks.length && results.length < num; i++) {
             const block = resultBlocks[i];
