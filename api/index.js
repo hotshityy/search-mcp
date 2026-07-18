@@ -1,5 +1,4 @@
 export default async function handler(req, res) {
-  // CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -21,7 +20,7 @@ export default async function handler(req, res) {
       result = {
         protocolVersion: '2024-11-05',
         capabilities: { tools: {} },
-        serverInfo: { name: 'google-search-mcp', version: '1.0.0' },
+        serverInfo: { name: 'searx-mcp', version: '1.0.0' },
       };
       break;
 
@@ -32,8 +31,8 @@ export default async function handler(req, res) {
       result = {
         tools: [
           {
-            name: 'google_search',
-            description: 'Search the web using Google. Returns titles, links, and snippets.',
+            name: 'web_search',
+            description: 'Search the web. Returns titles, links, and snippets.',
             inputSchema: {
               type: 'object',
               properties: {
@@ -48,31 +47,45 @@ export default async function handler(req, res) {
       break;
 
     case 'tools/call':
-      if (params.name === 'google_search') {
+      if (params.name === 'web_search') {
         const query = params.arguments.query;
         const num = params.arguments.num || 5;
 
-        try {
-          const url = `https://www.googleapis.com/customsearch/v1?key=${process.env.GOOGLE_API_KEY}&cx=${process.env.GOOGLE_CX}&q=${encodeURIComponent(query)}&num=${num}`;
-          const response = await fetch(url);
-          const data = await response.json();
+        const instances = [
+          'https://search.sapti.me',
+          'https://searx.tiekoetter.com',
+          'https://search.bus-hit.me',
+        ];
 
-          if (data.error) {
-            result = {
-              content: [{ type: 'text', text: `Error: ${data.error.message}` }],
-              isError: true,
-            };
-          } else if (data.items && data.items.length > 0) {
-            const text = data.items
-              .map((item, i) => `${i + 1}. ${item.title}\n   ${item.link}\n   ${item.snippet || ''}`)
-              .join('\n\n');
-            result = { content: [{ type: 'text', text }] };
-          } else {
-            result = { content: [{ type: 'text', text: 'No results found.' }] };
+        let data = null;
+        let lastError = '';
+
+        for (const instance of instances) {
+          try {
+            const url = `${instance}/search?q=${encodeURIComponent(query)}&format=json&number_of_results=${num}`;
+            const response = await fetch(url, {
+              headers: { 'User-Agent': 'MCP-Search/1.0' },
+            });
+            if (response.ok) {
+              data = await response.json();
+              break;
+            }
+          } catch (e) {
+            lastError = e.message;
           }
-        } catch (e) {
+        }
+
+        if (data && data.results && data.results.length > 0) {
+          const text = data.results
+            .slice(0, num)
+            .map((item, i) => `${i + 1}. ${item.title}\n   ${item.link}\n   ${item.content || ''}`)
+            .join('\n\n');
+          result = { content: [{ type: 'text', text }] };
+        } else if (data) {
+          result = { content: [{ type: 'text', text: 'No results found.' }] };
+        } else {
           result = {
-            content: [{ type: 'text', text: `Fetch error: ${e.message}` }],
+            content: [{ type: 'text', text: `All instances failed. Last error: ${lastError}` }],
             isError: true,
           };
         }
