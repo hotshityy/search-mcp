@@ -51,10 +51,12 @@ export default async function handler(req, res) {
         const query = params.arguments.query;
         const num = params.arguments.num || 5;
 
-        const instances = [
-          'https://search.sapti.me',
-          'https://searx.tiekoetter.com',
-          'https://search.bus-hit.me',
+const instances = [
+          'https://searx.be',
+          'https://search.ononoki.org',
+          'https://searx.work',
+          'https://paulgo.io',
+          'https://priv.au',
         ];
 
         let data = null;
