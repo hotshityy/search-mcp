@@ -52,54 +52,62 @@ export default async function handler(req, res) {
         const num = params.arguments.num || 5;
 
         try {
-          const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
-          const response = await fetch(url, {
-            method: 'POST',
+          // Step 1: Get vqd token
+          const tokenRes = await fetch(`https://duckduckgo.com/?q=${encodeURIComponent(query)}`, {
             headers: {
               'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-              'Content-Type': 'application/x-www-form-urlencoded',
             },
-            body: `q=${encodeURIComponent(query)}`,
           });
+          const tokenHtml = await tokenRes.text();
+          const vqdMatch = tokenHtml.match(/vqd=["']?([^"'&]+)/);
 
-          const html = await response.text();
-
-          // Parse results from DuckDuckGo HTML
-          const results = [];
-         const resultBlocks = html.split('result__body');
-
-          for (let i = 1; i < resultBlocks.length && results.length < num; i++) {
-            const block = resultBlocks[i];
-
-            // Extract title and link
-            const linkMatch = block.match(/class="result__a"[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/);
-            // Extract snippet
-            const snippetMatch = block.match(/class="result__snippet"[^>]*>([\s\S]*?)<\/(?:a|span|td)/);
-
-            if (linkMatch) {
-              let link = linkMatch[1];
-              // DuckDuckGo wraps links in a redirect URL
-              const uddgMatch = link.match(/uddg=([^&]*)/);
-              if (uddgMatch) {
-                link = decodeURIComponent(uddgMatch[1]);
-              }
-
-              const title = linkMatch[2].replace(/<[^>]*>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#x27;/g, "'").replace(/&quot;/g, '"').trim();
-              const snippet = snippetMatch
-                ? snippetMatch[1].replace(/<[^>]*>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#x27;/g, "'").replace(/&quot;/g, '"').trim()
-                : '';
-
-              if (title && link) {
-                results.push({ title, link, snippet });
-              }
-            }
+          if (!vqdMatch) {
+            result = { content: [{ type: 'text', text: 'Failed to get search token.' }], isError: true };
+            break;
           }
 
-          if (results.length > 0) {
-            const text = results
-              .map((item, i) => `${i + 1}. ${item.title}\n   ${item.link}\n   ${item.snippet}`)
-              .join('\n\n');
-            result = { content: [{ type: 'text', text }] };
+          const vqd = vqdMatch[1];
+
+          // Step 2: Use DuckDuckGo internal API
+          const searchUrl = `https://links.duckduckgo.com/d.js?q=${encodeURIComponent(query)}&vqd=${vqd}&kl=wt-wt&l=wt-wt&p=&s=0&df=&ex=-1`;
+          const searchRes = await fetch(searchUrl, {
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+              'Referer': 'https://duckduckgo.com/',
+            },
+          });
+
+          const text = await searchRes.text();
+
+          // Parse JSON from JSONP-like response
+          const jsonMatch = text.match(/DDG\.pageLayout\.load\('d',(\[[\s\S]*?\])\);/);
+          if (!jsonMatch) {
+            // Try direct JSON parse
+            try {
+              const data = JSON.parse(text);
+              if (Array.isArray(data)) {
+                const items = data.filter(r => r.u && r.t).slice(0, num);
+                if (items.length > 0) {
+                  const output = items.map((item, i) => `${i + 1}. ${item.t}\n   ${item.u}\n   ${item.a || ''}`).join('\n\n');
+                  result = { content: [{ type: 'text', text: output }] };
+                  break;
+                }
+              }
+            } catch(e) {}
+            result = { content: [{ type: 'text', text: 'Failed to parse search results.' }], isError: true };
+            break;
+          }
+
+          const data = JSON.parse(jsonMatch[1]);
+          const items = data.filter(r => r.u && r.t).slice(0, num);
+
+          if (items.length > 0) {
+            const output = items.map((item, i) => {
+              const title = item.t.replace(/<[^>]*>/g, '');
+              const snippet = (item.a || '').replace(/<[^>]*>/g, '');
+              return `${i + 1}. ${title}\n   ${item.u}\n   ${snippet}`;
+            }).join('\n\n');
+            result = { content: [{ type: 'text', text: output }] };
           } else {
             result = { content: [{ type: 'text', text: 'No results found.' }] };
           }
